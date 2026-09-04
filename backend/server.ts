@@ -2,7 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import dotenv from 'dotenv';
-import { connectDB, getDBStatus } from './server/db.js';
+
+import {
+  connectDB,
+  getDBStatus,
+} from './server/db.js';
+
 import { seedDatabase } from './server/seed.js';
 
 import productRoutes from './server/routes/productRoutes.js';
@@ -14,72 +19,128 @@ import activityRoutes from './server/routes/activityRoutes.js';
 
 dotenv.config();
 
-const PORT = Number(process.env.PORT) || 10000;
+const app = express();
 
-async function startServer() {
-  const app = express();
+const PORT =
+  Number(process.env.PORT) || 10000;
 
-  const allowedOrigin = process.env.FRONTEND_URL?.trim();
-  app.use(
-    cors({
-      origin: allowedOrigin ? allowedOrigin.replace(/\/$/, '') : true,
-      credentials: false,
-    })
+const frontendUrl =
+  process.env.FRONTEND_URL?.trim().replace(
+    /\/$/,
+    ''
   );
-  app.use(express.json());
 
-  // Connect to MongoDB
-  try {
-    const mongoUri = await connectDB();
-    console.log(`StockPilot connected to MongoDB (${mongoUri})`);
-    await seedDatabase(false);
-  } catch (err: any) {
-    console.error('Database connection error on start:', err.message);
-    if (process.env.NODE_ENV === 'production') {
-      process.exit(1);
-    }
-  }
+app.use(
+  cors({
+    origin: frontendUrl || true,
+    credentials: false,
+  })
+);
 
-  // API Health & DB status
-  app.get('/api/health', (req, res) => {
-    res.json({
-      status: 'ok',
-      service: 'STOCKPILOT API',
-      version: '1.0.0',
-      database: getDBStatus(),
-      timestamp: new Date().toISOString(),
-    });
+app.use(express.json());
+
+app.get('/api/health', (_req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    service: 'StockPilot API',
+    version: '1.0.0',
+    database: getDBStatus(),
+    timestamp: new Date().toISOString(),
   });
+});
 
-  // REST API Routes
-  app.use('/api/products', productRoutes);
-  app.use('/api/orders', orderRoutes);
-  app.use('/api/warehouse', warehouseRoutes);
-  app.use('/api/scan', scanRoutes);
-  app.use('/api/analytics', analyticsRoutes);
-  app.use('/api/activity', activityRoutes);
+/*
+ * API ROUTES
+ *
+ * Every frontend request must use /api.
+ */
 
-  // Vite middleware for development vs static build in production
-  if (process.env.NODE_ENV !== 'production') {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
+app.use('/api/products', productRoutes);
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`StockPilot API listening on port ${PORT}`);
+app.use('/api/orders', orderRoutes);
+
+app.use('/api/warehouse', warehouseRoutes);
+
+app.use('/api/scan', scanRoutes);
+
+app.use('/api/analytics', analyticsRoutes);
+
+app.use('/api/activity', activityRoutes);
+
+/*
+ * Unknown API route
+ */
+
+app.use('/api/*', (_req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'API route not found',
+  });
+});
+
+/*
+ * Production static frontend.
+ *
+ * This is only useful if you deploy the combined
+ * backend/frontend application.
+ */
+
+if (process.env.NODE_ENV === 'production') {
+  const distPath = path.join(
+    process.cwd(),
+    'dist'
+  );
+
+  app.use(express.static(distPath));
+
+  app.get('*', (_req, res) => {
+    res.sendFile(
+      path.join(distPath, 'index.html')
+    );
   });
 }
 
-startServer().catch((err) => {
-  console.error('Fatal server startup error:', err);
-});
+/*
+ * Start server
+ */
+
+async function startServer() {
+  try {
+    await connectDB();
+
+    console.log(
+      'StockPilot database connected'
+    );
+
+    try {
+      await seedDatabase(false);
+      console.log(
+        'StockPilot database initialized'
+      );
+    } catch (seedError) {
+      console.warn(
+        'Database seed skipped:',
+        seedError
+      );
+    }
+
+    app.listen(
+      PORT,
+      '0.0.0.0',
+      () => {
+        console.log(
+          `StockPilot API running on port ${PORT}`
+        );
+      }
+    );
+  } catch (error) {
+    console.error(
+      'Failed to start StockPilot:',
+      error
+    );
+
+    process.exit(1);
+  }
+}
+
+startServer();
