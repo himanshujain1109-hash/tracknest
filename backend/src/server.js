@@ -10,33 +10,15 @@ const app = express();
 
 const PORT = process.env.PORT || 5000;
 
+
 // =====================================================
 // CORS
 // =====================================================
 
-const allowedOrigins = [
-  "http://localhost:5173",
-  "http://localhost:3000",
-  process.env.FRONTEND_URL,
-].filter(Boolean);
-
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow requests from tools/server-side requests
-      if (!origin) {
-        return callback(null, true);
-      }
-
-      // Allow configured origins
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-
-      // Keep deployment easy while testing
-      return callback(null, true);
-    },
-    credentials: true,
+    origin: true,
+    credentials: true
   })
 );
 
@@ -44,15 +26,14 @@ app.use(express.json());
 
 
 // =====================================================
-// ROOT ROUTE
+// ROOT
 // =====================================================
 
 app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
     status: "online",
-    message: "SmartStock API is running 🚀",
-    service: "Smart Barcode Inventory & Delivery Tracking",
+    message: "SmartStock API is running 🚀"
   });
 });
 
@@ -65,26 +46,26 @@ app.get("/api/health", (req, res) => {
   res.status(200).json({
     success: true,
     status: "healthy",
-    message: "SmartStock backend is working",
+    message: "SmartStock backend is working"
   });
 });
 
 
 // =====================================================
-// API ROUTES
+// API
 // =====================================================
 
 app.use("/api", api);
 
 
 // =====================================================
-// 404 HANDLER
+// 404
 // =====================================================
 
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    message: `Route ${req.method} ${req.originalUrl} not found`,
+    message: `Route ${req.method} ${req.originalUrl} not found`
   });
 });
 
@@ -94,52 +75,62 @@ app.use((req, res) => {
 // =====================================================
 
 app.use((err, req, res, next) => {
+
   console.error("SERVER ERROR:", err);
 
   res.status(500).json({
     success: false,
-    message: "Internal server error",
+    message: "Internal server error"
   });
+
 });
 
 
 // =====================================================
-// CREATE DEMO USERS
+// DEMO USERS
 // =====================================================
 
 async function createDemoUsers() {
-  console.log("Checking demo users...");
 
   const users = [
     {
       name: "Admin",
       email: "admin@example.com",
       password: "123456",
-      role: "ADMIN",
+      role: "ADMIN"
     },
     {
       name: "Warehouse",
       email: "warehouse@example.com",
       password: "123456",
-      role: "WAREHOUSE",
+      role: "WAREHOUSE"
     },
     {
       name: "Delivery",
       email: "delivery@example.com",
       password: "123456",
-      role: "DELIVERY",
-    },
+      role: "DELIVERY"
+    }
   ];
 
+
   for (const user of users) {
+
     const existing = await get(
       "SELECT id FROM users WHERE email = ?",
       [user.email]
     );
 
-    const passwordHash = await bcrypt.hash(user.password, 10);
 
     if (!existing) {
+
+      const passwordHash =
+        await bcrypt.hash(
+          user.password,
+          10
+        );
+
+
       await run(
         `
         INSERT INTO users
@@ -150,77 +141,67 @@ async function createDemoUsers() {
           user.name,
           user.email,
           passwordHash,
-          user.role,
+          user.role
         ]
       );
 
-      console.log(`Created demo user: ${user.email}`);
-    } else {
-      // Keep the demo credentials usable even if an older
-      // database already contains the account.
-      await run(
-        `
-        UPDATE users
-        SET name = ?,
-            password_hash = ?,
-            role = ?,
-            is_active = 1
-        WHERE email = ?
-        `,
-        [
-          user.name,
-          passwordHash,
-          user.role,
-          user.email,
-        ]
+
+      console.log(
+        `Created demo user: ${user.email}`
       );
 
-      console.log(`Updated demo user: ${user.email}`);
     }
+
   }
+
 }
 
 
 // =====================================================
-// CREATE DEMO PRODUCTS
+// DEMO PRODUCTS
 // =====================================================
 
 async function createDemoProducts() {
+
   const products = [
     [
       "8901234567890",
       "Wireless Mouse",
-      "Electronics",
+      "Electronics"
     ],
     [
       "8901234567891",
       "Keyboard",
-      "Electronics",
+      "Electronics"
     ],
     [
       "8901234567892",
       "USB Cable",
-      "Accessories",
+      "Accessories"
     ],
     [
       "8901234567893",
       "Webcam",
-      "Electronics",
+      "Electronics"
     ],
     [
       "8901234567894",
       "Headphones",
-      "Audio",
-    ],
+      "Audio"
+    ]
   ];
 
+
   for (const product of products) {
+
     const existing = await get(
       "SELECT id FROM products WHERE barcode = ?",
       [product[0]]
     );
 
+
     if (!existing) {
+
       await run(
         `
         INSERT INTO products
@@ -230,20 +211,24 @@ async function createDemoProducts() {
         product
       );
 
-      console.log(`Created product: ${product[1]}`);
     }
+
   }
+
 }
 
 
 // =====================================================
-// CREATE WAREHOUSE
+// WAREHOUSE
 // =====================================================
 
 async function createWarehouse() {
+
   const rows = ["A", "B", "C"];
 
+
   for (const rowCode of rows) {
+
     await run(
       `
       INSERT OR IGNORE INTO warehouse_rows
@@ -252,6 +237,7 @@ async function createWarehouse() {
       `,
       [rowCode]
     );
+
 
     const row = await get(
       `
@@ -262,9 +248,13 @@ async function createWarehouse() {
       [rowCode]
     );
 
+
     for (let i = 1; i <= 5; i++) {
+
       const binCode =
-        rowCode + String(i).padStart(2, "0");
+        rowCode +
+        String(i).padStart(2, "0");
+
 
       await run(
         `
@@ -274,57 +264,90 @@ async function createWarehouse() {
         `,
         [
           row.id,
-          binCode,
+          binCode
         ]
       );
+
     }
+
   }
 
-  console.log("Warehouse structure ready.");
 }
 
 
 // =====================================================
-// START SERVER
+// START
 // =====================================================
 
 async function startServer() {
+
   try {
-    console.log("------------------------------------");
-    console.log("Starting SmartStock backend...");
-    console.log("------------------------------------");
 
-    // Initialize database
-    await init();
-
-    console.log("Database initialized.");
-
-    // Automatically create demo data
-    await createDemoUsers();
-    await createDemoProducts();
-    await createWarehouse();
-
-    console.log("------------------------------------");
-    console.log("Demo Login");
-    console.log("Email: admin@example.com");
-    console.log("Password: 123456");
-    console.log("------------------------------------");
-
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(
-        `SmartStock API running on port ${PORT}`
-      );
-    });
-
-  } catch (error) {
-    console.error(
-      "FAILED TO START SMARTSTOCK SERVER:"
+    console.log(
+      "Starting SmartStock backend..."
     );
 
-    console.error(error);
+
+    await init();
+
+    console.log(
+      "Database initialized."
+    );
+
+
+    await createDemoUsers();
+
+    await createDemoProducts();
+
+    await createWarehouse();
+
+
+    console.log(
+      "--------------------------------"
+    );
+
+    console.log(
+      "Demo Login:"
+    );
+
+    console.log(
+      "admin@example.com"
+    );
+
+    console.log(
+      "Password: 123456"
+    );
+
+    console.log(
+      "--------------------------------"
+    );
+
+
+    app.listen(
+      PORT,
+      "0.0.0.0",
+      () => {
+
+        console.log(
+          `SmartStock API running on port ${PORT}`
+        );
+
+      }
+    );
+
+
+  } catch (error) {
+
+    console.error(
+      "Failed to start server:",
+      error
+    );
 
     process.exit(1);
+
   }
+
 }
+
 
 startServer();
