@@ -1,64 +1,75 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { createRoot } from "react-dom/client";
+import React, {
+  useEffect,
+  useMemo,
+  useState
+} from "react";
+
+import {
+  createRoot
+} from "react-dom/client";
+
 import axios from "axios";
+
 import "./style.css";
 
 
 // =====================================================
-// API CONFIGURATION
+// SMARTSTOCK API
 // =====================================================
 
 // IMPORTANT:
-// Replace this with your ACTUAL Render backend URL.
+// Put your ACTUAL Render backend URL here.
 //
 // Example:
-// https://smartstock-backend.onrender.com
+// https://tracknest-backend.onrender.com
 //
-// Do NOT put /api here.
-// The code below automatically adds /api.
+// DO NOT add /api here.
 
 const RENDER_BACKEND_URL =
   "https://tracknest-4sp1.onrender.com";
 
 
 // =====================================================
-// BUILD API URL
+// API URL BUILDER
 // =====================================================
 
-function buildApiUrl() {
-
-  // First preference: Vercel environment variable
-  const envUrl =
-    import.meta.env.VITE_API_URL?.trim();
+function getApiUrl() {
 
   let url =
-    envUrl ||
+    import.meta.env.VITE_API_URL ||
     RENDER_BACKEND_URL;
 
-  // Remove trailing slash
+  url = String(url).trim();
+
+  // Remove trailing /
   url = url.replace(/\/+$/, "");
 
-  // Remove /api if user accidentally included it
-  url = url.replace(/\/api$/, "");
+  // Remove /api if it was already supplied
+  if (url.endsWith("/api")) {
+    url = url.slice(0, -4);
+  }
 
-  // Add /api exactly once
   return `${url}/api`;
 }
 
 
-const API_URL = buildApiUrl();
+const API_URL = getApiUrl();
 
 
 // =====================================================
-// AXIOS INSTANCE
+// AXIOS
 // =====================================================
 
 const api = axios.create({
+
   baseURL: API_URL,
+
   timeout: 15000,
+
   headers: {
-    "Content-Type": "application/json",
-  },
+    "Content-Type": "application/json"
+  }
+
 });
 
 
@@ -67,48 +78,30 @@ const api = axios.create({
 // =====================================================
 
 api.interceptors.request.use(
+
   (config) => {
 
     const token =
       localStorage.getItem("token");
 
     if (token) {
+
+      config.headers =
+        config.headers || {};
+
       config.headers.Authorization =
         `Bearer ${token}`;
+
     }
 
     return config;
+
   },
 
   (error) => {
-    return Promise.reject(error);
-  }
-);
-
-
-// =====================================================
-// RESPONSE ERROR HANDLING
-// =====================================================
-
-api.interceptors.response.use(
-  (response) => response,
-
-  (error) => {
-
-    // If token has expired
-    if (error?.response?.status === 401) {
-
-      const requestUrl =
-        error?.config?.url || "";
-
-      // Don't immediately clear login
-      // while attempting login itself.
-      if (!requestUrl.includes("/auth/login")) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
-      }
-    }
 
     return Promise.reject(error);
+
   }
+
 );
