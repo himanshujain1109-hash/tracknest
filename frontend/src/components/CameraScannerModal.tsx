@@ -1,6 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Camera, X, Check, AlertCircle, KeyRound } from 'lucide-react';
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Camera,
+  X,
+  Check,
+  AlertCircle,
+  KeyRound,
+} from 'lucide-react';
+import {
+  Html5Qrcode,
+  Html5QrcodeSupportedFormats,
+} from 'html5-qrcode';
 
 interface CameraScannerModalProps {
   isOpen: boolean;
@@ -11,7 +20,11 @@ interface CameraScannerModalProps {
   expectedProductName?: string;
 }
 
-export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
+const READER_ID = 'stockpilot-camera-reader';
+
+export const CameraScannerModal: React.FC<
+  CameraScannerModalProps
+> = ({
   isOpen,
   onClose,
   onScan,
@@ -20,16 +33,18 @@ export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
   expectedProductName,
 }) => {
   const [manualCode, setManualCode] = useState('');
-  const [isCameraActive, setIsCameraActive] = useState(false);
-  const [isStarting, setIsStarting] = useState(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [active, setActive] = useState(false);
+  const [error, setError] = useState('');
+
   const scannerRef = useRef<Html5Qrcode | null>(null);
-  const scannerElementId = 'stockpilot-camera-reader';
+  const scanHandledRef = useRef(false);
 
   const stopCamera = async () => {
     const scanner = scannerRef.current;
+
     if (!scanner) {
-      setIsCameraActive(false);
+      setActive(false);
       return;
     }
 
@@ -37,30 +52,47 @@ export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
       if (scanner.isScanning) {
         await scanner.stop();
       }
-    } catch (error) {
-      console.warn('Camera stop error:', error);
-    } finally {
-      try {
-        scanner.clear();
-      } catch {
-        // The scanner may already have cleared its DOM.
-      }
-      scannerRef.current = null;
-      setIsCameraActive(false);
+    } catch (err) {
+      console.warn('Unable to stop camera:', err);
     }
+
+    try {
+      scanner.clear();
+    } catch {
+      // Ignore cleanup errors.
+    }
+
+    scannerRef.current = null;
+    setActive(false);
   };
 
   const startCamera = async () => {
-    if (isStarting || isCameraActive) return;
+    if (starting || active) {
+      return;
+    }
 
-    setCameraError(null);
-    setIsStarting(true);
+    setStarting(true);
+    setError('');
+    scanHandledRef.current = false;
 
     try {
-      // The reader must remain visible while html5-qrcode initializes.
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (!window.isSecureContext) {
+        throw new Error(
+          'Camera access requires HTTPS.'
+        );
+      }
 
-      const scanner = new Html5Qrcode(scannerElementId, {
+      const reader = document.getElementById(READER_ID);
+
+      if (!reader) {
+        throw new Error(
+          'Camera container was not found.'
+        );
+      }
+
+      reader.innerHTML = '';
+
+      const scanner = new Html5Qrcode(READER_ID, {
         formatsToSupport: [
           Html5QrcodeSupportedFormats.EAN_13,
           Html5QrcodeSupportedFormats.EAN_8,
@@ -76,37 +108,108 @@ export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
       scannerRef.current = scanner;
 
       await scanner.start(
-        { facingMode: 'environment' },
+        {
+          facingMode: {
+            ideal: 'environment',
+          },
+        },
         {
           fps: 10,
-          qrbox: { width: 280, height: 160 },
+          qrbox: {
+            width: 280,
+            height: 160,
+          },
           aspectRatio: 1.7777778,
+          disableFlip: false,
         },
         async (decodedText) => {
+          if (scanHandledRef.current) {
+            return;
+          }
+
+          scanHandledRef.current = true;
+
+          const code = decodedText.trim();
+
+          if (!code) {
+            scanHandledRef.current = false;
+            return;
+          }
+
           await stopCamera();
-          onScan(decodedText.trim());
+
+          onScan(code);
           onClose();
         },
         () => {
-          // Ignore normal frame-by-frame decode misses.
+          // Normal barcode frame miss.
         }
       );
 
-      setIsCameraActive(true);
-    } catch (error: any) {
-      console.warn('Camera initialization failed:', error);
+      const video =
+        document.querySelector(
+          `#${READER_ID} video`
+        ) as HTMLVideoElement | null;
+
+      if (video) {
+        video.setAttribute(
+          'playsinline',
+          'true'
+        );
+
+        video.setAttribute(
+          'autoplay',
+          'true'
+        );
+
+        video.muted = true;
+
+        video.style.display = 'block';
+        video.style.width = '100%';
+        video.style.height = '100%';
+        video.style.minHeight = '280px';
+        video.style.maxHeight = '420px';
+        video.style.objectFit = 'cover';
+        video.style.background = '#000';
+
+        try {
+          await video.play();
+        } catch {
+          // Browser may already be playing the stream.
+        }
+      }
+
+      setActive(true);
+    } catch (err: any) {
+      console.error('Camera error:', err);
+
       await stopCamera();
 
-      const message = String(error?.message || error || '');
-      if (/permission|denied|notallowed/i.test(message)) {
-        setCameraError('Camera permission was denied. Allow camera access in your browser and try again.');
-      } else if (/secure|https|insecure/i.test(message)) {
-        setCameraError('Camera access requires HTTPS. Open the deployed site over HTTPS.');
+      const message = String(
+        err?.message || err || ''
+      );
+
+      if (
+        /permission|denied|notallowed/i.test(
+          message
+        )
+      ) {
+        setError(
+          'Camera permission was denied. Allow camera access in your browser settings and try again.'
+        );
+      } else if (
+        /secure|https|insecure/i.test(message)
+      ) {
+        setError(
+          'Camera access requires HTTPS. Open the Vercel website using HTTPS.'
+        );
       } else {
-        setCameraError('Unable to start the camera. Check browser permissions and use manual barcode entry if needed.');
+        setError(
+          'Unable to access the camera. Check browser permissions or use manual barcode entry.'
+        );
       }
     } finally {
-      setIsStarting(false);
+      setStarting(false);
     }
   };
 
@@ -114,7 +217,9 @@ export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
     if (!isOpen) {
       void stopCamera();
       setManualCode('');
-      setCameraError(null);
+      setError('');
+      setStarting(false);
+      return;
     }
 
     return () => {
@@ -122,121 +227,167 @@ export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
     };
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  const handleManualSubmit = (
+    event: React.FormEvent
+  ) => {
+    event.preventDefault();
 
-  const handleManualSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
     const code = manualCode.trim();
-    if (!code) return;
+
+    if (!code) {
+      return;
+    }
+
     void stopCamera();
+
     onScan(code);
     onClose();
   };
 
+  if (!isOpen) {
+    return null;
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/75 p-4 backdrop-blur-sm">
-      <div className="relative w-full max-w-lg rounded-xl border border-slate-700 bg-slate-900 p-5 text-slate-100 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+      <div className="relative w-full max-w-xl overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 text-white shadow-2xl">
+
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-              <Camera className="h-5 w-5" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10">
+              <Camera className="h-5 w-5 text-emerald-400" />
             </div>
+
             <div>
-              <h3 className="font-semibold text-lg text-white">{title}</h3>
-              <p className="text-xs text-slate-400">Use your device camera or enter a barcode manually.</p>
+              <h3 className="text-lg font-semibold">
+                {title}
+              </h3>
+
+              <p className="text-xs text-slate-400">
+                Scan a product barcode using your camera.
+              </p>
             </div>
           </div>
+
           <button
             type="button"
             onClick={() => {
               void stopCamera();
               onClose();
             }}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+            className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white"
             aria-label="Close scanner"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
+        {/* Expected product */}
         {expectedBarcode && (
-          <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-            <div className="flex items-start gap-2">
-              <AlertCircle className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+          <div className="mx-5 mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+            <div className="flex gap-2">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+
               <div>
-                <span className="text-xs font-semibold uppercase tracking-wider text-amber-400">Target Item</span>
-                <p className="text-sm font-medium text-slate-200">{expectedProductName || 'Product'}</p>
-                <p className="text-xs text-amber-200 font-mono">Expected: {expectedBarcode}</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-400">
+                  Target Item
+                </p>
+
+                <p className="text-sm font-medium text-slate-200">
+                  {expectedProductName || 'Product'}
+                </p>
+
+                <p className="mt-1 font-mono text-xs text-amber-200">
+                  Expected: {expectedBarcode}
+                </p>
               </div>
             </div>
           </div>
         )}
 
-        <div className="mt-4 overflow-hidden rounded-lg border border-slate-700 bg-black">
-          {/* Keep this element visible. Hiding it during scanner.start() can produce a blank/black camera view. */}
+        {/* Camera */}
+        <div className="mx-5 mt-4 overflow-hidden rounded-xl border border-slate-700 bg-black">
+
           <div
-            id={scannerElementId}
-            className="w-full min-h-[240px] bg-black"
-            style={{ minHeight: 240 }}
+            id={READER_ID}
+            className="relative w-full overflow-hidden bg-black"
+            style={{
+              minHeight: '280px',
+            }}
           />
 
-          {!isCameraActive && (
-            <div className="flex flex-col items-center justify-center p-7 text-center">
-              <div className="rounded-full bg-slate-800 p-4 text-slate-400 mb-3 border border-slate-700">
-                <Camera className="h-8 w-8" />
+          {!active && (
+            <div className="flex min-h-[180px] flex-col items-center justify-center px-6 py-8 text-center">
+              <div className="mb-4 rounded-full border border-slate-700 bg-slate-800 p-4">
+                <Camera className="h-8 w-8 text-slate-400" />
               </div>
-              <p className="text-sm text-slate-300 font-medium">
-                {isStarting ? 'Starting camera…' : 'Camera ready'}
+
+              <p className="font-medium text-slate-200">
+                {starting
+                  ? 'Starting camera...'
+                  : 'Camera ready'}
               </p>
-              {!isStarting && (
-                <>
-                  <p className="text-xs text-slate-400 max-w-xs mt-1 mb-4">
-                    Allow camera access when your browser asks for permission.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => void startCamera()}
-                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
-                  >
-                    <Camera className="h-4 w-4" /> Start Camera
-                  </button>
-                </>
+
+              <p className="mt-1 max-w-sm text-xs text-slate-400">
+                Allow camera permission when your browser asks.
+              </p>
+
+              {!starting && (
+                <button
+                  type="button"
+                  onClick={() => void startCamera()}
+                  className="mt-5 inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500"
+                >
+                  <Camera className="h-4 w-4" />
+                  Start Camera
+                </button>
               )}
             </div>
           )}
 
-          {isCameraActive && (
-            <div className="flex items-center gap-2 border-t border-slate-800 bg-slate-950 px-3 py-2 text-xs text-emerald-300">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+          {active && (
+            <div className="flex items-center gap-2 border-t border-slate-800 bg-slate-950 px-4 py-2.5 text-xs text-emerald-300">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
               Camera active — point it at the barcode.
             </div>
           )}
 
-          {cameraError && (
-            <div className="border-t border-rose-900/50 bg-rose-950/40 p-3 text-xs text-rose-300">
-              {cameraError}
+          {error && (
+            <div className="border-t border-rose-900/50 bg-rose-950/40 px-4 py-3 text-xs text-rose-300">
+              {error}
             </div>
           )}
         </div>
 
-        <form onSubmit={handleManualSubmit} className="mt-4">
-          <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-slate-300">
-            <KeyRound className="h-3.5 w-3.5 text-slate-400" /> Manual barcode
+        {/* Manual barcode */}
+        <form
+          onSubmit={handleManualSubmit}
+          className="px-5 pb-5 pt-4"
+        >
+          <label className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-300">
+            <KeyRound className="h-3.5 w-3.5 text-slate-400" />
+            Manual barcode
           </label>
+
           <div className="flex gap-2">
             <input
               type="text"
               value={manualCode}
-              onChange={(e) => setManualCode(e.target.value)}
+              onChange={(event) =>
+                setManualCode(event.target.value)
+              }
               placeholder="Enter barcode"
-              className="flex-1 rounded-lg border border-slate-700 bg-slate-800/80 px-3.5 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-800 px-3.5 py-2.5 font-mono text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-500"
             />
+
             <button
               type="submit"
               disabled={!manualCode.trim()}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40"
+              className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <Check className="mr-1 inline h-4 w-4" /> Use Code
+              <Check className="mr-1 inline h-4 w-4" />
+              Use Code
             </button>
           </div>
         </form>
